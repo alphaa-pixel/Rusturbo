@@ -820,7 +820,7 @@ fn cmd_benchmark(root: &Path, args: BenchArgs, quiet: bool) -> Result<()> {
                             } else {
                                 "fresh checkout but no shared cache for this graph yet — this run populates it".into()
                             },
-                            watch_dirs: vec![sandbox_target],
+                            watch_dirs: vec![sandbox_target.clone()],
                         },
                         &args.app_args,
                         &cacheops::binary_path(
