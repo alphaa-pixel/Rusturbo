@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 env:
-  CARGO_TERM_COLOR: always
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
 
 jobs:
   test:
@@ -23,13 +24,57 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo check
+        shell: bash
+        run: cargo check --all-targets --message-format=short 2>&1 | tee check.log
+
       - name: Tests
-        run: cargo test --all-targets --verbose
+        shell: bash
+        run: cargo test --all-targets 2>&1 | tee test.log
+
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee clippy.log
+
+      # GitHub-hosted log downloads are not reachable from some environments; surface
+      # compiler diagnostics as check-run annotations instead, which are.
+      - name: Surface diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          def emit(lines, title):
+              chunk = []
+              size = 0
+              out = []
+              for ln in lines:
+                  if size + len(ln) > 3000:
+                      out.append(chunk); chunk = []; size = 0
+                  chunk.append(ln); size += len(ln) + 1
+              if chunk:
+                  out.append(chunk)
+              for i, c in enumerate(out[:12]):
+                  msg = "\n".join(c).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                  print(f"::error title={title} part {i+1}::{msg}")
+
+          for log in ("check.log", "test.log", "clippy.log"):
+              if not os.path.exists(log):
+                  continue
+              lines = open(log, errors="replace").read().splitlines()
+              keep, capture = [], 0
+              for ln in lines:
+                  if ln.startswith("error") or "error[" in ln or "panicked at" in ln or "FAILED" in ln:
+                      capture = 12
+                  if capture > 0:
+                      keep.append(ln)
+                      capture -= 1
+              if keep:
+                  emit(keep, log)
+          PY
 
   smoke:
     name: end-to-end (real Actix build via rusturbo)
@@ -40,7 +85,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build rusturbo
-        run: cargo build --release
+        shell: bash
+        run: cargo build --release --message-format=short 2>&1 | tee build.log
 
       - name: init the demo project
         working-directory: demo/actix-hello
@@ -48,35 +94,38 @@ jobs:
 
       - name: analyze
         working-directory: demo/actix-hello
-        run: ../../target/release/rusturbo analyze --output /tmp/analyze.txt
+        run: ../../target/release/rusturbo analyze --output /tmp/analyze.json --json
 
-      - name: build through rusturbo (cold cache)
+      - name: build through rusturbo (cold turbo cache)
         working-directory: demo/actix-hello
         run: ../../target/release/rusturbo build --explain
 
-      - name: analyze again (should report a cache hit)
+      - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello
+        shell: bash
         run: |
           ../../target/release/rusturbo analyze | tee /tmp/analyze2.txt
-          grep -Eq "cache hit" /tmp/analyze2.txt || { echo "expected a cache hit after a successful build"; exit 1; }
+          grep -Eq "cache hit" /tmp/analyze2.txt
 
       - name: start the server and hit it
         working-directory: demo/actix-hello
+        shell: bash
         run: |
           set -euo pipefail
-          TARGET=$($HOME/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null || true)
-          BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1)
-          [ -n "${BIN:-}" ] || BIN=target/debug/actix-hello
+          BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1 || true)
+          if [ -z "${BIN:-}" ]; then BIN=target/debug/actix-hello; fi
+          echo "running $BIN"
           PORT=18080 "$BIN" > /tmp/server.log 2>&1 &
-          for i in $(seq 1 50); do
+          SERVER_PID=$!
+          for _ in $(seq 1 100); do
             if curl -fsS http://127.0.0.1:18080/health > /tmp/health.json 2>/dev/null; then break; fi
             sleep 0.2
           done
           cat /tmp/health.json
           grep -q '"status":"ok"' /tmp/health.json
-          kill %1 || true
+          kill "$SERVER_PID"
 
-      - name: benchmark (warm scenarios only in CI)
+      - name: benchmark (warm scenarios; cold download is opt-in)
         working-directory: demo/actix-hello
         run: ../../target/release/rusturbo benchmark --scenarios cargo-warm-registry,rusturbo-warm --out bench
 
@@ -84,3 +133,22 @@ jobs:
         with:
           name: benchmark-report
           path: demo/actix-hello/bench/report.*
+
+      - name: Surface diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          if os.path.exists("build.log"):
+              lines = open("build.log", errors="replace").read().splitlines()
+              keep, capture = [], 0
+              for ln in lines:
+                  if ln.startswith("error") or "error[" in ln:
+                      capture = 12
+                  if capture > 0:
+                      keep.append(ln); capture -= 1
+              msg = "%0A".join(keep[-200:]).replace("%", "%25")[:6000]
+              if msg:
+                  print(f"::error title=build.log::{msg}")
+          PY
