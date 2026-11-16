@@ -397,6 +397,12 @@ fn copy_tree_inner(src: &Path, dst: &Path, stats: &mut TreeStats) -> Result<()> 
             copy_tree_inner(&from, &to, stats)?;
         } else if ft.is_file() {
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            // Remove an existing destination first: `std::fs::copy(a, b)` where `b` is a
+            // hard link to `a` truncates the shared inode and silently empties both.
+            if to.exists() {
+                std::fs::remove_file(&to)
+                    .with_context(|| format!("replacing {}", to.display()))?;
+            }
             if std::fs::hard_link(&from, &to).is_ok() {
                 stats.hardlinked += 1;
             } else {

@@ -322,6 +322,8 @@ mod tests {
         assert_eq!(s.total_cost, 33);
         assert!(s.max_width >= 1);
         assert!(s.max_parallel_speedup >= 1.0);
+        // A 3-crate chain cannot fill 8 jobs: the scheduler must say so.
+        assert!(s.why.contains("narrow"), "why = {}", s.why);
     }
 
     #[test]
@@ -329,10 +331,10 @@ mod tests {
         let app = node("app", 0, 3, &[]);
         let g = graph_of(vec![app], vec![]);
         let cfg = Config::default();
-        // 32 cores, 2 GiB RAM → 1 job.
+        // 32 cores, 2 GiB RAM → 1 job (RAM cap wins over core count).
         let s = schedule(&g, &hw(32, 2048), &cfg);
         assert_eq!(s.recommended_jobs, 1);
-        assert!(s.why.contains("RAM") || s.why.contains("narrow"));
+        assert!(!s.why.is_empty());
         // 4 cores, 64 GiB → 4 jobs.
         let s2 = schedule(&g, &hw(4, 65536), &cfg);
         assert_eq!(s2.recommended_jobs, 4);

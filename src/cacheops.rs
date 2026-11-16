@@ -423,10 +423,14 @@ mod tests {
 
     #[test]
     fn binary_path_maps_dev_to_debug_dir() {
+        // Compare components so the test holds on Windows (where the separator and the
+        // `.exe` suffix differ).
         let p = binary_path(Path::new("/t/target"), "dev", "actix-hello");
-        assert!(p.ends_with("debug/actix-hello"));
+        assert_eq!(p.parent().unwrap().file_name().unwrap(), "debug");
+        assert!(p.file_name().unwrap().to_string_lossy().starts_with("actix-hello"));
         let r = binary_path(Path::new("/t/target"), "release", "app");
-        assert!(r.ends_with("release/app"));
+        assert_eq!(r.parent().unwrap().file_name().unwrap(), "release");
+        assert!(r.file_name().unwrap().to_string_lossy().starts_with("app"));
     }
 
     #[test]

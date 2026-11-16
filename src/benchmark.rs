@@ -489,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn tree_usage_reads_self() {
         let pid = std::process::id();
         let (rss, cpu) = tree_usage(pid).expect("proc readable");
@@ -497,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn sampler_records_peak_for_child() {
         let mut child = Command::new("sh")
             .arg("-c")
