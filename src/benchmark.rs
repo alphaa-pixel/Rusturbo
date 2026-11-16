@@ -271,7 +271,7 @@ fn tree_usage(root_pid: u32) -> Option<(u64, u64)> {
 /// returns the environment patch + expected target dir + whether a cache hit is
 /// expected.
 pub struct ScenarioPlan {
-    pub env: EnvPatch,
+    pub env: process::EnvPatch,
     pub cache_hit: bool,
     pub comment: String,
     pub watch_dirs: Vec<PathBuf>,
@@ -343,7 +343,7 @@ fn measure_startup(
     binary: &Path,
     cwd: &Path,
     args: &[String],
-    env: &EnvPatch,
+    env: &process::EnvPatch,
 ) -> Result<(Option<f64>, Option<String>)> {
     if !binary.is_file() {
         return Ok((

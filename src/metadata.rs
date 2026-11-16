@@ -111,7 +111,6 @@ impl Analyzer {
 
         for node in &resolve.nodes {
             let from = node.id.repr.clone();
-            let from_pkg = by_id.get(&node.id);
             let from_is_ws = workspace.contains(&node.id);
             for dep in &node.deps {
                 let mut keep = false;
@@ -138,7 +137,7 @@ impl Analyzer {
                 edges.entry(from.clone()).or_default().push(to.clone());
                 reverse.entry(to.clone()).or_default().insert(from.clone());
                 if is_build {
-                    build_deps.entry(from).or_default().insert(to);
+                    build_deps.entry(from.clone()).or_default().insert(to);
                 }
             }
         }

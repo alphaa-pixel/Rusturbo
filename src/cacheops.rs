@@ -275,7 +275,6 @@ pub fn run_cargo(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hardware::LinkerChoice;
 
     fn toolchain() -> Toolchain {
         Toolchain {

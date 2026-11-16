@@ -73,7 +73,8 @@ impl CacheKey {
 pub fn graph_fingerprint(packages: &[(String, String, Vec<String>)]) -> String {
     let mut lines: Vec<String> = packages
         .iter()
-        .map(|(name, ver, mut feats)| {
+        .map(|(name, ver, feats)| {
+            let mut feats = feats.clone();
             feats.sort();
             feats.dedup();
             format!("{name}-{ver}[{}]", feats.join(","))
@@ -576,7 +577,7 @@ mod tests {
     #[test]
     fn missing_entries_miss_cleanly() {
         let root = temp_dir("miss");
-        let cache = ArtifactCache::new(root, 20, true);
+        let cache = ArtifactCache::new(root.clone(), 20, true);
         assert!(cache.get("nope").is_none());
         assert!(!cache.contains("nope"));
         assert!(cache.materialize("nope", &root.join("x")).is_err());

@@ -46,7 +46,7 @@ impl Fingerprint {
     /// Finalize into a hex digest. Short keys (first 16 hex chars = 64 bits) are used
     /// for directory names; the full digest stays available for verification.
     pub fn finish(&self) -> String {
-        let mut h = self.hasher.clone();
+        let h = self.hasher.clone();
         hex(&h.finalize())
     }
 

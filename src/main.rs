@@ -774,7 +774,7 @@ fn cmd_benchmark(root: &Path, args: BenchArgs, quiet: bool) -> Result<()> {
                             watch_dirs: watch,
                         },
                         &args.app_args,
-                        &benchmark::binary_path(&project_target, "dev", &bin_name),
+                        &cacheops::binary_path(&project_target, "dev", &bin_name),
                         graph.package_count,
                     )
                 }
@@ -823,7 +823,7 @@ fn cmd_benchmark(root: &Path, args: BenchArgs, quiet: bool) -> Result<()> {
                             watch_dirs: vec![sandbox_target],
                         },
                         &args.app_args,
-                        &benchmark::binary_path(
+                        &cacheops::binary_path(
                             &cacheops::effective_target_dir(&plan, &sandbox_target),
                             "dev",
                             &bin_name,
@@ -861,7 +861,7 @@ fn cmd_benchmark(root: &Path, args: BenchArgs, quiet: bool) -> Result<()> {
                                 watch_dirs: vec![project_target.clone()],
                             },
                             &args.app_args,
-                            &benchmark::binary_path(&project_target, "dev", &bin_name),
+                            &cacheops::binary_path(&project_target, "dev", &bin_name),
                             graph.package_count,
                         )
                     } else {
@@ -906,7 +906,7 @@ fn cmd_benchmark(root: &Path, args: BenchArgs, quiet: bool) -> Result<()> {
                                 watch_dirs: vec![project_target.clone()],
                             },
                             &args.app_args,
-                            &benchmark::binary_path(
+                            &cacheops::binary_path(
                                 &cacheops::effective_target_dir(&plan, &project_target),
                                 "dev",
                                 &bin_name,
