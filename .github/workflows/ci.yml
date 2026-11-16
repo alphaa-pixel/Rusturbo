@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: build + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --all-targets --verbose
+
+  smoke:
+    name: end-to-end (real Actix build via rusturbo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build rusturbo
+        run: cargo build --release
+
+      - name: init the demo project
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo init --preset actix
+
+      - name: analyze
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo analyze --output /tmp/analyze.txt
+
+      - name: build through rusturbo (cold cache)
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo build --explain
+
+      - name: analyze again (should report a cache hit)
+        working-directory: demo/actix-hello
+        run: |
+          ../../target/release/rusturbo analyze | tee /tmp/analyze2.txt
+          grep -Eq "cache hit" /tmp/analyze2.txt || { echo "expected a cache hit after a successful build"; exit 1; }
+
+      - name: start the server and hit it
+        working-directory: demo/actix-hello
+        run: |
+          set -euo pipefail
+          TARGET=$($HOME/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null || true)
+          BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1)
+          [ -n "${BIN:-}" ] || BIN=target/debug/actix-hello
+          PORT=18080 "$BIN" > /tmp/server.log 2>&1 &
+          for i in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:18080/health > /tmp/health.json 2>/dev/null; then break; fi
+            sleep 0.2
+          done
+          cat /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+          kill %1 || true
+
+      - name: benchmark (warm scenarios only in CI)
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo benchmark --scenarios cargo-warm-registry,rusturbo-warm --out bench
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: demo/actix-hello/bench/report.*

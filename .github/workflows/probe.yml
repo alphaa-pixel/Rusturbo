@@ -1,9 +1,0 @@
-name: probe
-on:
-  push:
-    branches: [arena/44d37fe7-rusturbo]
-jobs:
-  p:
-    runs-on: ubuntu-latest
-    steps:
-      - run: rustc --version && cargo --version
