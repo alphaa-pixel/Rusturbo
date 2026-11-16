@@ -98,8 +98,21 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ../../target/release/rusturbo build --explain --dry-run 2>&1 | tee /tmp/dryrun.log
-          ../../target/release/rusturbo build --explain 2>&1 | tee /tmp/build-turbo.log
+          annotate() {
+            python3 - "$1" <<'PY'
+          import sys
+          lines = open(sys.argv[1], errors="replace").read().splitlines()
+          payload = "\n".join(lines[-60:]).replace("%", "%25")[:6000]
+          print(f"::error title=turbo-output::{payload}")
+          PY
+          }
+          if ! ../../target/release/rusturbo build --explain --dry-run > /tmp/dryrun.log 2>&1; then
+            cat /tmp/dryrun.log; annotate /tmp/dryrun.log; exit 1
+          fi
+          if ! ../../target/release/rusturbo build --explain > /tmp/build-turbo.log 2>&1; then
+            cat /tmp/build-turbo.log; annotate /tmp/build-turbo.log; exit 1
+          fi
+          tail -20 /tmp/build-turbo.log
 
       - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello
