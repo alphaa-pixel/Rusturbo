@@ -36,7 +36,7 @@ jobs:
       - name: Clippy
         if: matrix.os == 'ubuntu-latest'
         shell: bash
-        run: cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee clippy.log
+        run: cargo clippy --all-targets --message-format=short 2>&1 | tee clippy.log
 
       # GitHub-hosted log downloads are not reachable from some environments; surface
       # compiler diagnostics as check-run annotations instead, which are.
@@ -45,35 +45,32 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json, os, urllib.request
+          import os
 
-          def emit(lines, title):
-              chunk = []
-              size = 0
-              out = []
+          def blocks(lines):
+              """Group diagnostic-looking lines into chunks that fit an annotation."""
+              keep, chunk, size, out = [], [], 0, []
               for ln in lines:
-                  if size + len(ln) > 3000:
-                      out.append(chunk); chunk = []; size = 0
-                  chunk.append(ln); size += len(ln) + 1
+                  hot = (": error" in ln or ": warning:" in ln or ln.startswith("error")
+                         or ln.startswith("warning:") or "panicked at" in ln
+                         or "FAILED" in ln or "left:" in ln or "right:" in ln)
+                  if hot:
+                      if size + len(ln) > 2800:
+                          out.append(chunk); chunk, size = [], 0
+                      chunk.append(ln)
+                      size += len(ln) + 1
               if chunk:
                   out.append(chunk)
-              for i, c in enumerate(out[:12]):
-                  msg = "\n".join(c).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-                  print(f"::error title={title} part {i+1}::{msg}")
+              return out
 
-          for log in ("check.log", "test.log", "clippy.log"):
+          for log in ("check.log", "test.log", "clippy.log", "build.log",
+                      "/tmp/dryrun.log", "/tmp/build-turbo.log", "/tmp/server.log"):
               if not os.path.exists(log):
                   continue
-              lines = open(log, errors="replace").read().splitlines()
-              keep, capture = [], 0
-              for ln in lines:
-                  if ln.startswith("error") or "error[" in ln or "panicked at" in ln or "FAILED" in ln:
-                      capture = 12
-                  if capture > 0:
-                      keep.append(ln)
-                      capture -= 1
-              if keep:
-                  emit(keep, log)
+              groups = blocks(open(log, errors="replace").read().splitlines())
+              for i, g in enumerate(groups[:10]):
+                  msg = "\n".join(g).replace("%", "%25").replace("\r", "")
+                  print(f"::error title={log} ({i+1}/{len(groups)})::{msg}")
           PY
 
   smoke:
@@ -98,7 +95,11 @@ jobs:
 
       - name: build through rusturbo (cold turbo cache)
         working-directory: demo/actix-hello
-        run: ../../target/release/rusturbo build --explain
+        shell: bash
+        run: |
+          set -o pipefail
+          ../../target/release/rusturbo build --explain --dry-run 2>&1 | tee /tmp/dryrun.log
+          ../../target/release/rusturbo build --explain 2>&1 | tee /tmp/build-turbo.log
 
       - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello

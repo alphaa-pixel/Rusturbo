@@ -189,12 +189,15 @@ pub fn actix_cargo_args(cfg: &Config, profile: &str, actix_version: Option<&str>
 mod tests {
     use super::*;
 
+    /// The constants are the contract: these assertions pin the *values* that the docs
+    /// promise. (They are `const`s, so a plain comparison is what we want here.)
     #[test]
     fn presets_differ_as_documented() {
-        assert_eq!(BALANCED.dep_debug, 0);
-        assert_eq!(SAFE.dep_debug, 2);
-        assert_eq!(FASTEST.debug, 0);
-        assert!(BALANCED.incremental);
+        let actual = (BALANCED.dep_debug, SAFE.dep_debug, FASTEST.debug, BALANCED.incremental);
+        let documented = (0u8, 2u8, 0u8, true);
+        assert_eq!(actual, documented);
+        assert_eq!(preset_by_name("safe").name, "safe");
+        assert_eq!(preset_by_name("nonsense").name, "balanced");
     }
 
     #[test]
