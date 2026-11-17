@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: build + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        shell: bash
+        run: cargo check --all-targets --message-format=short 2>&1 | tee check.log
+
+      - name: Tests
+        shell: bash
+        run: cargo test --all-targets 2>&1 | tee test.log
+
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: cargo clippy --all-targets --message-format=short 2>&1 | tee clippy.log
+
+      # Hosted log downloads are blocked from some environments; post the log tail as a
+      # commit comment instead, which is readable through the REST API.
+      - name: Publish diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, os
+          for log in ("check.log", "test.log", "clippy.log"):
+              if not os.path.exists(log):
+                  continue
+              text = open(log, errors="replace").read().splitlines()
+              # Prefer the "failures:" section; fall back to the last lines.
+              idx = next((i for i, l in enumerate(text) if l.strip() == "failures:"), None)
+              chunk = text[idx:idx + 60] if idx is not None else text[-60:]
+              payload = " | ".join(chunk).replace("%", "%25")[:6000]
+              print(f"::error title={log}::{payload}")
+          PY
+
+  smoke:
+    name: end-to-end (real Actix build via rusturbo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build rusturbo
+        shell: bash
+        run: cargo build --release --message-format=short 2>&1 | tee build.log
+
+      - name: init the demo project
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo init --preset actix
+
+      - name: analyze
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo analyze --output /tmp/analyze.json --json
+
+      - name: capture environment
+        working-directory: demo/actix-hello
+        shell: bash
+        run: |
+          echo "CARGO_HOME=${CARGO_HOME:-unset}"; echo "RUSTUP_HOME=${RUSTUP_HOME:-unset}"
+          ls -la; cat rusturbo.toml || true
+          which cargo rustc; cargo --version; rustc -vV | head -3
+          echo '--- raw cargo build (no rusturbo) ---'
+          cargo build --profile dev 2>&1 | tail -5 || echo "raw cargo build failed rc=$?"
+
+      - name: build through rusturbo (cold turbo cache)
+        working-directory: demo/actix-hello
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo "### rusturbo dry run"
+            ../../target/release/rusturbo build --explain --dry-run 2>&1 || true
+            echo "### rusturbo build (real)"
+            ../../target/release/rusturbo build --explain 2>&1 || echo "BUILD_FAILED rc=$?"
+          } > /tmp/turbo.log 2>&1
+          cat /tmp/turbo.log
+          if grep -q "BUILD_FAILED" /tmp/turbo.log; then
+            python3 - <<'PY'
+          text = open("/tmp/turbo.log", errors="replace").read()
+          payload = " | ".join(text.splitlines()[-80:]).replace("%", "%25")[:6000]
+          print(f"::error title=turbo-output::{payload}")
+          PY
+            exit 1
+          fi
+
+      - name: analyze again (expects a cache hit)
+        working-directory: demo/actix-hello
+        shell: bash
+        run: |
+          ../../target/release/rusturbo analyze | tee /tmp/analyze2.txt
+          grep -Eq "cache hit" /tmp/analyze2.txt
+
+      - name: start the server and hit it
+        working-directory: demo/actix-hello
+        shell: bash
+        run: |
+          {
+            echo "shared targets:"; ls -d "$HOME"/.cache/rusturbo/shared/* 2>/dev/null || echo "none"
+            BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1 || true)
+            if [ -z "${BIN:-}" ]; then BIN=target/debug/actix-hello; fi
+            echo "BIN=$BIN"; ls -la "$BIN" || true
+            if [ ! -x "$BIN" ]; then echo "SERVER_STEP_FAILED: no executable"; exit 1; fi
+            PORT=18080 "$BIN" > /tmp/server.log 2>&1 &
+            SERVER_PID=$!
+            OK=0
+            for _ in $(seq 1 100); do
+              if curl -fsS http://127.0.0.1:18080/health > /tmp/health.json 2>/dev/null; then OK=1; break; fi
+              sleep 0.2
+            done
+            echo "--- server.log ---"; cat /tmp/server.log || true
+            if [ "$OK" != "1" ]; then echo "SERVER_STEP_FAILED: health check never succeeded"; exit 1; fi
+            cat /tmp/health.json
+            grep -q '"status":"ok"' /tmp/health.json
+            kill "$SERVER_PID" || true
+          } 2>&1 | tee /tmp/server-step.log
+
+      - name: benchmark (warm scenarios; cold download is opt-in)
+        working-directory: demo/actix-hello
+        run: ../../target/release/rusturbo benchmark --scenarios cargo-warm-registry,rusturbo-warm --out bench
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-report
+          path: demo/actix-hello/bench/report.*
+
+      - name: Surface diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          if os.path.exists("build.log"):
+              lines = open("build.log", errors="replace").read().splitlines()
+              keep, capture = [], 0
+              for ln in lines:
+                  if ln.startswith("error") or "error[" in ln:
+                      capture = 12
+                  if capture > 0:
+                      keep.append(ln); capture -= 1
+              msg = "%0A".join(keep[-200:]).replace("%", "%25")[:6000]
+              if msg:
+                  print(f"::error title=build.log::{msg}")
+          PY

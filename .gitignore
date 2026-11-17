@@ -1,0 +1,13 @@
+# build artifacts
+/target
+/demo/*/target
+/demo/*/bench
+
+# rusturbo runtime state
+.rusturbo-cache
+
+# editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,27 @@
+{
+  "name": "rusturbo",
+  "version": "0.1.0",
+  "description": "RustTurbo — extreme Rust compilation accelerator. Install the native binary from GitHub Releases.",
+  "bin": {
+    "rusturbo": "bin/rusturbo.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/rusturbo.js",
+    "install.js",
+    "README.md"
+  ],
+  "keywords": ["rust", "cargo", "build", "cache", "actix", "compiler", "cli"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-golden-army/Rusturbo.git"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"]
+}
