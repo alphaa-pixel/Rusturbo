@@ -119,6 +119,8 @@ jobs:
           if ! ../../target/release/rusturbo build --explain --dry-run > /tmp/dryrun.log 2>&1; then
             cat /tmp/dryrun.log; annotate /tmp/dryrun.log; exit 1
           fi
+          echo "--- dry run (always annotated for visibility) ---"
+          annotate /tmp/dryrun.log
           if ! ../../target/release/rusturbo build --explain > /tmp/build-turbo.log 2>&1; then
             cat /tmp/build-turbo.log; annotate /tmp/build-turbo.log; exit 1
           fi

@@ -615,21 +615,20 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
             cfg.effective_jobs(hw.logical_cores, hw.ram_mb),
             util::truncate_middle(&target_dir.display().to_string(), 60)
         );
-        if args.explain || !quiet {
-            report::cache_note(hit, &format!("{:?} ({})", plan.reuse, plan.decision.reason));
-            for w in &plan.decision.warnings {
-                eprintln!("  {} {}", util::yellow("!"), w);
-            }
-        }
-    }
-
-    if !quiet {
+        // Order matters for diagnostics: announce the exact command first, then the
+        // cache verdict, so a failing run is never ambiguous about what was executed.
         eprintln!(
             "{} {} {}",
             util::dim("»"),
             cacheops::cargo_bin(),
             util::dim(&cargo_args.join(" "))
         );
+        if args.explain || !quiet {
+            report::cache_note(hit, &format!("{:?} ({})", plan.reuse, plan.decision.reason));
+            for w in &plan.decision.warnings {
+                eprintln!("  {} {}", util::yellow("!"), w);
+            }
+        }
     }
     let started = Instant::now();
     let captured = match cacheops::run_cargo(root, &cargo_args, &env.out, !quiet) {
