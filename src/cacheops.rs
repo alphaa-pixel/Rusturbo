@@ -206,9 +206,13 @@ pub fn publish(
     // would make the next project with the same graph start from an empty target dir —
     // and would make our own "cache hit" report a lie.
     if cfg.cache.shared_targets && plan.shared_target_dir.is_none() {
+        // `source_dir` is `<target>/<profile-dir>` (e.g. `target/debug`), but a
+        // CARGO_TARGET_DIR must keep that level: Cargo looks for `<target>/debug/deps`,
+        // not `<target>/deps`. Mirror the profile directory name.
         let shared = cache.shared_target(&plan.key.short);
-        std::fs::create_dir_all(&shared)?;
-        crate::cache::copy_tree(source_dir, &shared)?;
+        let dest = shared.join(profile_dir_name(profile));
+        std::fs::create_dir_all(&dest)?;
+        crate::cache::copy_tree(source_dir, &dest)?;
     }
     if cfg.cache.shared_targets {
         cache.mark_shared_ready(&plan.key.short, meta.clone())?;
@@ -225,12 +229,17 @@ pub fn apply_reuse(env: &mut EnvPatch, plan: &WarmPlan) {
     }
 }
 
-/// Where the local crate's binary lands.
-pub fn binary_path(target_dir: &Path, profile: &str, bin_name: &str) -> PathBuf {
-    let sub = match profile {
+/// Cargo's directory name for a profile (`dev` → `debug`).
+pub fn profile_dir_name(profile: &str) -> &str {
+    match profile {
         "dev" | "test" => "debug",
         other => other,
-    };
+    }
+}
+
+/// Where the local crate's binary lands.
+pub fn binary_path(target_dir: &Path, profile: &str, bin_name: &str) -> PathBuf {
+    let sub = profile_dir_name(profile);
     let exe = if cfg!(windows) {
         format!("{bin_name}.exe")
     } else {
@@ -462,12 +471,14 @@ mod tests {
 
         let shared = cache.shared_target(&cold.key.short);
         assert!(cache.shared_exists(&cold.key.short));
+        // A CARGO_TARGET_DIR keeps the profile level: <shared>/debug/deps/...
         assert!(
-            shared.join("libtokio-abc.rlib").is_file(),
-            "shared dir must contain real artifacts, dir = {}",
+            shared.join("debug/libtokio-abc.rlib").is_file(),
+            "shared dir must mirror the profile directory, dir = {}",
             shared.display()
         );
-        assert!(shared.join("deps/libserde-x.rlib").is_file());
+        assert!(shared.join("debug/deps/libserde-x.rlib").is_file());
+        assert!(!shared.join("deps").exists(), "artifacts must not land at the target root");
 
         // A second project with the same graph now really reuses that directory.
         let plan2 = plan(
