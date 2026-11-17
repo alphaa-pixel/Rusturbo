@@ -117,7 +117,14 @@ jobs:
             ../../target/release/rusturbo build --explain 2>&1 || echo "BUILD_FAILED rc=$?"
           } > /tmp/turbo.log 2>&1
           cat /tmp/turbo.log
-          if grep -q "BUILD_FAILED" /tmp/turbo.log; then exit 1; fi
+          if grep -q "BUILD_FAILED" /tmp/turbo.log; then
+            python3 - <<'PY'
+          text = open("/tmp/turbo.log", errors="replace").read()
+          payload = " | ".join(text.splitlines()[-80:]).replace("%", "%25")[:6000]
+          print(f"::error title=turbo-output::{payload}")
+          PY
+            exit 1
+          fi
 
       - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello
@@ -153,23 +160,6 @@ jobs:
         with:
           name: benchmark-report
           path: demo/actix-hello/bench/report.*
-
-      - name: Publish e2e log
-        if: failure()
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json, os, urllib.request
-          body = "### rusturbo e2e log\n```\n" + open("/tmp/turbo.log", errors="replace").read()[-50000:] + "\n```"
-          url = os.environ["GITHUB_API_URL"] + "/repos/" + os.environ["GITHUB_REPOSITORY"] + "/commits/" + os.environ["GITHUB_SHA"] + "/comments"
-          req = urllib.request.Request(url, method="POST", data=json.dumps({"body": body}).encode(),
-              headers={"Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
-                       "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
-          try:
-              urllib.request.urlopen(req); print("posted")
-          except Exception as e:
-              print("could not post comment:", e)
-          PY
 
       - name: Surface diagnostics
         if: failure()
