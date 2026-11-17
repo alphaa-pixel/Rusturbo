@@ -13,14 +13,25 @@ across projects, drives a fast linker, and **measures the result** instead of cl
 
 </div>
 
+> **Status: v0.1.0 — working MVP, validated end to end.**
+> CI compiles and tests it on Linux, macOS and Windows, then runs a real Actix Web build
+> through `rusturbo`, verifies the cache hit on the follow-up run, boots the server and
+> health-checks it, and executes the benchmark harness. See
+> [`docs/DESIGN.md`](docs/DESIGN.md) for the decisions and the rejected alternatives.
+
 ---
 
 ## Install
 
 ```bash
-cargo install --path .          # from a checkout
-# or
-cargo build --release && cp target/release/rusturbo ~/.local/bin/
+# from a checkout
+cargo install --path .
+
+# from GitHub (any platform with a release binary)
+cargo install --git https://github.com/the-golden-army/Rusturbo --locked
+
+# npm (downloads the matching release binary)
+npm install -g rusturbo && rusturbo --help
 ```
 
 Requirements: Rust 1.74+, Cargo. Optional: `sccache` (shared compiler cache), `mold` or
@@ -247,6 +258,15 @@ first:
   target before use; shipping binaries without that check would be unsafe.
 - **Distributed compilation fan-out** — meaningful only when the critical path is wide,
   which `rusturbo analyze` now measures per project.
+
+## Repository layout & docs
+
+- [`docs/DESIGN.md`](docs/DESIGN.md) — engineering decisions, rejected approaches, known limitations
+- [`docs/RELEASING.md`](docs/RELEASING.md) — shipping to GitHub Releases, crates.io and npm
+- [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) — how to record real numbers (never invented)
+- `.github/workflows/ci.yml` — build + test + clippy on 3 OSes, plus a real Actix e2e run
+- `.github/workflows/release.yml` — 5-target binaries on tag push
+- `packaging/npm/` — npm shim + installer that fetches release binaries
 
 ## License
 
