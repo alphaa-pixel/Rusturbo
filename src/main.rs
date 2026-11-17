@@ -29,7 +29,6 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use config::Config;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -626,7 +625,6 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
             }
         }
     }
-    let started = Instant::now();
     let captured = match cacheops::run_cargo(root, &cargo_args, &env, !quiet) {
         Ok(c) => c,
         Err(e) => {
@@ -639,7 +637,6 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
         }
     };
     let elapsed = captured.duration;
-    let _ = started;
     if !captured.success() {
         let tail = util::truncate_middle(captured.stderr.trim(), 4000);
         anyhow::bail!(

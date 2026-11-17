@@ -25,7 +25,6 @@ impl Fingerprint {
         self.hasher.update(b"\x1f");
         self.hasher.update(value.as_bytes());
         self.hasher.update(b"\x1e");
-        self.inputs.push((label.to_string(), value.to_string()));
     }
 
     pub fn push_lines(&mut self, label: &str, values: &[String]) {

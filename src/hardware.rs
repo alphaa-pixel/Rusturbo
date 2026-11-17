@@ -425,7 +425,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn mold_is_never_selected_on_msvc() {
         let info = detect_linker("auto", "x86_64-pc-windows-msvc");
         assert_eq!(info.selected, LinkerChoice::System);
