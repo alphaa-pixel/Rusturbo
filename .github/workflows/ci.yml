@@ -48,31 +48,17 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          FILES=$(ls -1 check.log test.log clippy.log 2>/dev/null || true)
-          {
-            echo "### CI diagnostics for $GITHUB_SHA"
-            for f in $FILES; do
-              echo ""
-              echo "#### $f ($(wc -c < "$f") bytes)"
-              echo '```'
-              grep -nE "error|warning:|FAILED|panicked|left:|right:|assertion" "$f" | head -120 || true
-              echo '```'
-            done
-          } > /tmp/diag.md
           python3 - <<'PY'
-          import json, os, urllib.request
-          body = open("/tmp/diag.md", errors="replace").read()[:60000]
-          url = os.environ["GITHUB_API_URL"] + "/repos/" + os.environ["GITHUB_REPOSITORY"] + "/commits/" + os.environ["GITHUB_SHA"] + "/comments"
-          req = urllib.request.Request(url, method="POST",
-              data=json.dumps({"body": body}).encode(),
-              headers={"Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
-                       "Accept": "application/vnd.github+json",
-                       "Content-Type": "application/json"})
-          try:
-              urllib.request.urlopen(req)
-              print("posted diagnostics as a commit comment")
-          except Exception as e:
-              print("could not post comment:", e)
+          import glob, os
+          for log in ("check.log", "test.log", "clippy.log"):
+              if not os.path.exists(log):
+                  continue
+              text = open(log, errors="replace").read().splitlines()
+              # Prefer the "failures:" section; fall back to the last lines.
+              idx = next((i for i, l in enumerate(text) if l.strip() == "failures:"), None)
+              chunk = text[idx:idx + 60] if idx is not None else text[-60:]
+              payload = " | ".join(chunk).replace("%", "%25")[:6000]
+              print(f"::error title={log}::{payload}")
           PY
 
   smoke:
