@@ -139,13 +139,20 @@ impl LinkerChoice {
         }
     }
 
+    /// The flag as it must appear in `RUSTFLAGS`.
+    ///
+    /// `-fuse-ld=` is a *C compiler driver* flag; rustc does not understand it. Passing
+    /// it bare in `RUSTFLAGS` makes rustc abort with "Unrecognized option: 'fuse-ld'".
+    /// It has to be forwarded to the linker driver that rustc invokes, i.e.
+    /// `-C link-arg=-fuse-ld=lld`.
     pub fn flag(&self) -> Option<&'static str> {
         match self {
             LinkerChoice::System => None,
-            LinkerChoice::Lld => Some("-fuse-ld=lld"),
-            LinkerChoice::Mold => Some("-fuse-ld=mold"),
+            LinkerChoice::Lld => Some("-C link-arg=-fuse-ld=lld"),
+            LinkerChoice::Mold => Some("-C link-arg=-fuse-ld=mold"),
         }
     }
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -154,8 +161,10 @@ pub struct LinkerInfo {
     pub available: Vec<String>,
     pub lld_path: Option<String>,
     pub mold_path: Option<String>,
-    /// True when the selected linker can be used by rustc against the *gnu* target.
+    /// True when the selected linker can be used by rustc against this target.
     pub applicable: bool,
+    /// True when we actually test-linked with the driver and it succeeded.
+    pub verified: bool,
     pub reason: String,
 }
 
@@ -168,54 +177,80 @@ pub struct LinkerInfo {
 pub fn detect_linker(preference: &str, target_triple: &str) -> LinkerInfo {
     let lld = find_lld();
     let mold = process::which("mold").map(|p| p.display().to_string());
+
+    // A binary on PATH is not proof that rustc can use it. rustc forwards
+    // `-C link-arg=-fuse-ld=…` to the C linker driver, so we verify by test-linking a
+    // trivial program with that driver. Cached per process: the probe costs ~50 ms.
+    let mold_verified = mold.is_some() && driver_supports_fuse_ld("mold");
+    let lld_verified = lld.is_some() && driver_supports_fuse_ld("lld");
+
     let mut available = vec!["ld (bfd)".to_string()];
     if let Some(ref p) = lld {
-        available.push(format!("lld ({p})"));
+        available.push(format!("lld ({p}){}", if lld_verified { "" } else { " — unusable" }));
     }
     if let Some(ref p) = mold {
-        available.push(format!("mold ({p})"));
+        available.push(format!("mold ({p}){}", if mold_verified { "" } else { " — unusable" }));
     }
 
-    // `-fuse-ld=` is only meaningful for the GNU-style linkers rustc drives on ELF
-    // (and Apple/Windows targets have their own flavours). We refuse it everywhere else
-    // instead of passing an inert flag.
+    // `-C link-arg=-fuse-ld=` is only honoured by GNU-style linker drivers on ELF and
+    // Apple targets; elsewhere we refuse it instead of passing an inert flag.
     let fuse_ld_supported = target_triple.contains("linux")
         || target_triple.contains("freebsd")
         || target_triple.contains("netbsd")
         || target_triple.contains("android")
         || target_triple.contains("apple");
 
-    let (selected, reason) = match preference {
-        "default" => (LinkerChoice::System, "pinned to the system linker".into()),
+    let (selected, verified, reason) = match preference {
+        "default" => (LinkerChoice::System, false, "pinned to the system linker".to_string()),
         "lld" => {
-            if let Some(ref p) = lld {
-                (LinkerChoice::Lld, format!("requested; found {p}"))
+            if lld_verified {
+                (LinkerChoice::Lld, true, "requested and verified with a test link".to_string())
+            } else if lld.is_some() {
+                (
+                    LinkerChoice::System,
+                    false,
+                    "requested lld, found the binary, but the C driver rejected -fuse-ld=lld"
+                        .to_string(),
+                )
             } else {
                 (
                     LinkerChoice::System,
-                    "requested lld but no rustc-lld/lld was found on this host".into(),
+                    false,
+                    "requested lld but no lld/rust-lld was found on this host".to_string(),
                 )
             }
         }
         "mold" => {
-            if let Some(ref p) = mold {
-                (LinkerChoice::Mold, format!("requested; found {p}"))
-            } else {
+            if mold_verified {
+                (LinkerChoice::Mold, true, "requested and verified with a test link".to_string())
+            } else if mold.is_some() {
                 (
                     LinkerChoice::System,
-                    "requested mold but it is not installed".into(),
+                    false,
+                    "requested mold, found the binary, but the C driver rejected -fuse-ld=mold"
+                        .to_string(),
                 )
+            } else {
+                (LinkerChoice::System, false, "requested mold but it is not installed".to_string())
             }
         }
         _ => {
-            if let Some(ref p) = mold {
-                (LinkerChoice::Mold, format!("auto: mold is fastest ({p})"))
-            } else if let Some(ref p) = lld {
-                (LinkerChoice::Lld, format!("auto: lld available ({p})"))
+            if mold_verified {
+                (LinkerChoice::Mold, true, "auto: mold verified with a test link".to_string())
+            } else if lld_verified {
+                (LinkerChoice::Lld, true, "auto: lld verified with a test link".to_string())
+            } else if lld.is_some() || mold.is_some() {
+                (
+                    LinkerChoice::System,
+                    false,
+                    "auto: lld/mold present but not usable by the C linker driver; keeping the system linker"
+                        .to_string(),
+                )
             } else {
                 (
                     LinkerChoice::System,
-                    "auto: no lld/mold found; using the system linker".into(),
+                    false,
+                    "auto: no lld/mold found; using the system linker".to_string(),
                 )
             }
         }
@@ -232,12 +267,51 @@ pub fn detect_linker(preference: &str, target_triple: &str) -> LinkerInfo {
         lld_path: lld,
         mold_path: mold,
         applicable,
+        verified,
         reason: if applicable {
             reason
         } else {
             format!("{reason}; not applicable for target {target_triple}")
         },
     }
+}
+
+/// Test-link a trivial C program with `-fuse-ld=<name>` to prove the driver accepts it.
+fn driver_supports_fuse_ld(name: &str) -> bool {
+    use std::sync::OnceLock;
+    static LLD: OnceLock<bool> = OnceLock::new();
+    static MOLD: OnceLock<bool> = OnceLock::new();
+    // Only the two known linkers are ever probed, so two cells are enough.
+    let cell = if name == "mold" { &MOLD } else { &LLD };
+    *cell.get_or_init(|| probe_fuse_ld(name))
+}
+
+fn probe_fuse_ld(name: &str) -> bool {
+    let dir = std::env::temp_dir().join(format!(
+        "rusturbo-linkprobe-{}-{name}",
+        std::process::id()
+    ));
+    if std::fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let src = dir.join("probe.c");
+    let out = dir.join("probe.bin");
+    if std::fs::write(&src, b"int main(void){return 0;}\n").is_err() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return false;
+    }
+    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let args = vec![
+        format!("-fuse-ld={name}"),
+        src.display().to_string(),
+        "-o".to_string(),
+        out.display().to_string(),
+    ];
+    let ok = process::capture(&cc, &args, None, None)
+        .map(|c| c.success())
+        .unwrap_or(false);
+    let _ = std::fs::remove_dir_all(&dir);
+    ok
 }
 
 /// rustc ships `rust-lld` in its sysroot and recent rustc accepts `-fuse-ld=lld`
@@ -316,7 +390,9 @@ pub fn linker_env(choice: LinkerChoice, extra_flags: &[String]) -> EnvPatch {
         .map(|s| s.to_string())
         .collect();
     if let Some(f) = choice.flag() {
-        if !flags.iter().any(|x| x == f) {
+        // `-C link-arg=…` is two argv tokens; compare against the joined string.
+        let joined = flags.join(" ");
+        if !joined.contains(f) {
             flags.push(f.to_string());
         }
     }
@@ -366,8 +442,26 @@ mod tests {
         let info = detect_linker("lld", "x86_64-unknown-linux-gnu");
         if info.lld_path.is_none() {
             assert_eq!(info.selected, LinkerChoice::System);
-            assert!(info.reason.contains("no rustc-lld/lld"));
+            assert!(info.reason.contains("no lld/rust-lld was found") || !info.verified);
         }
+    }
+
+    #[test]
+    fn a_selected_fast_linker_is_always_verified() {
+        let info = detect_linker("auto", "x86_64-unknown-linux-gnu");
+        if info.selected != LinkerChoice::System {
+            assert!(info.verified, "must be proven with a test link: {}", info.reason);
+        }
+    }
+
+    #[test]
+    fn lld_flag_is_forwarded_to_the_linker_driver() {
+        // Regression: a bare `-fuse-ld=lld` in RUSTFLAGS makes rustc abort with
+        // "Unrecognized option: 'fuse-ld'". It must be a link-arg.
+        let flag = LinkerChoice::Lld.flag().unwrap();
+        assert_eq!(flag, "-C link-arg=-fuse-ld=lld");
+        assert_eq!(LinkerChoice::Mold.flag().unwrap(), "-C link-arg=-fuse-ld=mold");
+        assert_eq!(LinkerChoice::System.flag(), None);
     }
 
     #[test]
@@ -378,7 +472,7 @@ mod tests {
 
     #[test]
     fn linker_env_dedups_flags() {
-        let patch = linker_env(LinkerChoice::Lld, &["-fuse-ld=lld".to_string()]);
+        let patch = linker_env(LinkerChoice::Lld, &["-C link-arg=-fuse-ld=lld".to_string()]);
         let val = patch.set.get("RUSTFLAGS").cloned().unwrap_or_default();
         assert_eq!(val.matches("-fuse-ld=lld").count(), 1);
     }
