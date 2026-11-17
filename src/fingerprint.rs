@@ -11,8 +11,6 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Default, Clone)]
 pub struct Fingerprint {
     hasher: Sha256,
-    /// Human-readable list of what went into the hash, for `--explain` output.
-    inputs: Vec<(String, String)>,
 }
 
 impl Fingerprint {
@@ -39,10 +37,6 @@ impl Fingerprint {
         self.push(label, joined.trim_end_matches('\n'));
     }
 
-    pub fn inputs(&self) -> &[(String, String)] {
-        &self.inputs
-    }
-
     /// Finalize into a hex digest. Short keys (first 16 hex chars = 64 bits) are used
     /// for directory names; the full digest stays available for verification.
     pub fn finish(&self) -> String {
@@ -54,12 +48,6 @@ impl Fingerprint {
     pub fn short(&self) -> String {
         self.finish().chars().take(16).collect()
     }
-}
-
-pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
-    let mut h = Sha256::new();
-    h.update(data.as_ref());
-    hex(&h.finalize())
 }
 
 fn hex(bytes: &[u8]) -> String {

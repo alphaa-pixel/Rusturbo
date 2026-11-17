@@ -85,10 +85,6 @@ impl Analyzer {
         Ok(Self { metadata: full })
     }
 
-    pub fn from_metadata(metadata: Metadata) -> Self {
-        Self { metadata }
-    }
-
     /// Build the analysis graph. `include_dev` controls whether the workspace's dev
     /// dependencies are part of the graph: `cargo run` does not build them, `cargo test`
     /// does.

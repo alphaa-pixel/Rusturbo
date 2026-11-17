@@ -88,10 +88,6 @@ pub fn human_bytes(bytes: u64) -> String {
     }
 }
 
-pub fn human_mb(mb: u64) -> String {
-    human_bytes(mb * 1024 * 1024)
-}
-
 /// Wall clock seconds formatted as `YYYY-MM-DDTHH:MM:SSZ` (UTC), computed without
 /// pulling a date library into the dependency graph.
 pub fn iso8601_now() -> String {

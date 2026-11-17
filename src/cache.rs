@@ -165,10 +165,6 @@ impl ArtifactCache {
         }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub fn enabled(&self) -> bool {
         self.enabled
     }
@@ -251,12 +247,6 @@ impl ArtifactCache {
         let _ = touch(&buf.dir.join("meta.json"), &buf.meta);
         let stats = copy_tree(&buf.dir, dest)?;
         Ok(stats.bytes)
-    }
-
-    pub fn touch_entry(&self, key: &str) {
-        if let Some(buf) = self.get(key) {
-            let _ = touch(&buf.dir.join("meta.json"), &buf.meta);
-        }
     }
 
     // ----- shared target dirs ----------------------------------------------

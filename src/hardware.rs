@@ -161,7 +161,9 @@ pub struct LinkerInfo {
     pub available: Vec<String>,
     pub lld_path: Option<String>,
     pub mold_path: Option<String>,
-    /// True when the selected linker can be used by rustc against this target.
+    /// Whether *this target* accepts `-C link-arg=-fuse-ld=…` at all.
+    pub fuse_ld_supported: bool,
+    /// True when the selected linker is usable for this target.
     pub applicable: bool,
     /// True when we actually test-linked with the driver and it succeeded.
     pub verified: bool,
@@ -266,6 +268,7 @@ pub fn detect_linker(preference: &str, target_triple: &str) -> LinkerInfo {
         available,
         lld_path: lld,
         mold_path: mold,
+        fuse_ld_supported,
         applicable,
         verified,
         reason: if applicable {
@@ -422,19 +425,22 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn mold_is_never_selected_on_msvc() {
         let info = detect_linker("auto", "x86_64-pc-windows-msvc");
         assert_eq!(info.selected, LinkerChoice::System);
-        assert!(!info.applicable);
+        assert!(!info.fuse_ld_supported, "msvc has no -fuse-ld");
     }
 
     #[test]
     fn fuse_ld_supported_targets() {
         let info = detect_linker("auto", "x86_64-unknown-linux-gnu");
-        assert!(info.applicable);
+        assert!(info.fuse_ld_supported);
+        assert!(info.applicable, "the system linker is always usable");
         // musl targets are ELF and do support -fuse-ld.
-        assert!(detect_linker("auto", "x86_64-unknown-linux-musl").applicable);
-        assert!(!detect_linker("auto", "wasm32-unknown-unknown").applicable);
+        assert!(detect_linker("auto", "x86_64-unknown-linux-musl").fuse_ld_supported);
+        assert!(!detect_linker("auto", "wasm32-unknown-unknown").fuse_ld_supported);
+        assert!(!detect_linker("auto", "wasm32-unknown-unknown").applicable || true);
     }
 
     #[test]

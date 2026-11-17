@@ -440,10 +440,6 @@ fn cmd_optimize(root: &Path, args: OptimizeArgs, quiet: bool) -> Result<()> {
 
 // ---------------------------------------------------------------- build / run
 
-struct EnvSummary {
-    out: process::EnvPatch,
-}
-
 fn build_env(
     cfg: &Config,
     tc: &hardware::Toolchain,
@@ -451,7 +447,7 @@ fn build_env(
     use_cache: bool,
     profile: &str,
     actix_version: Option<&str>,
-) -> Result<EnvSummary> {
+) -> Result<process::EnvPatch> {
     let linker = hardware::detect_linker(&cfg.linker.mode, &tc.host);
     let mut env = hardware::linker_env(linker.selected, &cfg.linker.extra_flags);
     for (k, v) in presets::cargo_env(cfg, profile).set {
@@ -473,7 +469,7 @@ fn build_env(
     } else {
         env = env.remove("CARGO_TARGET_DIR");
     }
-    Ok(EnvSummary { out: env })
+    Ok(env)
 }
 
 fn resolve_bin_name(graph: &metadata::GraphAnalysis, root: &Path, explicit: Option<&str>) -> Result<String> {
@@ -596,10 +592,10 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
         println!("  {:22} {}", "reuse", format!("{:?}", plan.reuse));
         println!("  {:22} {}", "policy", plan.decision.reason);
         println!("\n  {}", util::bold("environment overrides:"));
-        for (k, v) in &env.out.set {
+        for (k, v) in &env.set {
             println!("    {k}={v}");
         }
-        for k in &env.out.remove {
+        for k in &env.remove {
             println!("    -{k}");
         }
         return Ok(());
@@ -631,7 +627,7 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
         }
     }
     let started = Instant::now();
-    let captured = match cacheops::run_cargo(root, &cargo_args, &env.out, !quiet) {
+    let captured = match cacheops::run_cargo(root, &cargo_args, &env, !quiet) {
         Ok(c) => c,
         Err(e) => {
             anyhow::bail!(
@@ -642,7 +638,8 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
             );
         }
     };
-    let elapsed = started.elapsed();
+    let elapsed = captured.duration;
+    let _ = started;
     if !captured.success() {
         let tail = util::truncate_middle(captured.stderr.trim(), 4000);
         anyhow::bail!(

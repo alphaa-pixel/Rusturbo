@@ -296,7 +296,7 @@ pub fn measure(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     plan.env.apply(&mut cmd);
-    let mut child = cmd
+    let child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn `{command}`"))?;
     let pid = child.id();

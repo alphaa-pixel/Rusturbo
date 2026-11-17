@@ -20,7 +20,6 @@ use crate::process::{self, EnvPatch};
 use crate::util;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 pub const RUSTURBO_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -89,7 +88,6 @@ pub struct WarmPlan {
     pub decision: CacheDecision,
     pub build_scripts: Vec<String>,
     pub shared_target_dir: Option<PathBuf>,
-    pub cache_add_ms: Duration,
 }
 
 /// Look for a reusable dependency set *before* invoking Cargo.
@@ -103,7 +101,6 @@ pub fn plan(
     extra_rustflags: &[String],
     project_target: &Path,
 ) -> WarmPlan {
-    let started = std::time::Instant::now();
     let pkgs = graph_packages(graph);
     let graph_hash = cache::graph_fingerprint(&pkgs);
     let key = build_key(
@@ -168,7 +165,6 @@ pub fn plan(
         decision,
         build_scripts: graph.build_script_packages.clone(),
         shared_target_dir,
-        cache_add_ms: started.elapsed(),
     }
 }
 
@@ -218,12 +214,6 @@ pub fn apply_reuse(env: &mut EnvPatch, plan: &WarmPlan) {
     if let Some(dir) = &plan.shared_target_dir {
         *env = env.clone().set("CARGO_TARGET_DIR", dir.display().to_string());
     }
-}
-
-pub fn shared_target_env(plan: &WarmPlan) -> Option<(String, String)> {
-    plan.shared_target_dir
-        .as_ref()
-        .map(|d| ("CARGO_TARGET_DIR".to_string(), d.display().to_string()))
 }
 
 /// Where the local crate's binary lands.
@@ -447,7 +437,6 @@ mod tests {
             },
             build_scripts: vec![],
             shared_target_dir: Some(PathBuf::from("/shared")),
-            cache_add_ms: Duration::from_millis(0),
         };
         assert_eq!(
             effective_target_dir(&plan, Path::new("/proj/target")),

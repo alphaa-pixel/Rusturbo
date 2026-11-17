@@ -105,14 +105,6 @@ pub fn capture_simple(program: &str, args: &[&str]) -> Result<Captured> {
     capture(program, &owned, None, None)
 }
 
-/// Check whether a program resolves on PATH (or at an absolute/relative path).
-pub fn have(program: &str) -> bool {
-    if program.contains('/') || program.contains('\\') {
-        return Path::new(program).is_file();
-    }
-    which(program).is_some()
-}
-
 /// Minimal `which` implementation (avoids the `which` crate).
 pub fn which(program: &str) -> Option<std::path::PathBuf> {
     let path_var = std::env::var_os("PATH")?;
@@ -134,29 +126,6 @@ pub fn which(program: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
-}
-
-/// Run a command with inherited stdio (used for the user's own program under
-/// `rusturbo run`), returning status and elapsed time.
-pub fn run_inherit(
-    program: &str,
-    args: &[String],
-    cwd: Option<&Path>,
-    env: Option<&EnvPatch>,
-) -> Result<(ExitStatus, Duration)> {
-    let start = Instant::now();
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
-    if let Some(env) = env {
-        env.apply(&mut cmd);
-    }
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to spawn `{program}`"))?;
-    Ok((status, start.elapsed()))
 }
 
 /// Run a command, streaming its stderr line-by-line through `sink` while capturing
@@ -208,10 +177,6 @@ where
     })
 }
 
-pub fn secs(d: Duration) -> f64 {
-    d.as_secs_f64()
-}
-
 pub fn fmt_dur(d: Duration) -> String {
     let s = d.as_secs_f64();
     if s < 1.0 {
@@ -261,8 +226,8 @@ mod tests {
 
     #[test]
     fn which_finds_sh() {
-        assert!(have("sh"));
-        assert!(!have("definitely-not-a-real-binary-xyz"));
+        assert!(which("sh").is_some());
+        assert!(which("definitely-not-a-real-binary-xyz").is_none());
     }
 
     #[test]
