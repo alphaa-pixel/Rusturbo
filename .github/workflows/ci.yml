@@ -123,19 +123,25 @@ jobs:
         working-directory: demo/actix-hello
         shell: bash
         run: |
-          set -euo pipefail
-          BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1 || true)
-          if [ -z "${BIN:-}" ]; then BIN=target/debug/actix-hello; fi
-          echo "running $BIN"
-          PORT=18080 "$BIN" > /tmp/server.log 2>&1 &
-          SERVER_PID=$!
-          for _ in $(seq 1 100); do
-            if curl -fsS http://127.0.0.1:18080/health > /tmp/health.json 2>/dev/null; then break; fi
-            sleep 0.2
-          done
-          cat /tmp/health.json
-          grep -q '"status":"ok"' /tmp/health.json
-          kill "$SERVER_PID"
+          {
+            echo "shared targets:"; ls -d "$HOME"/.cache/rusturbo/shared/* 2>/dev/null || echo "none"
+            BIN=$(ls -d "$HOME"/.cache/rusturbo/shared/*/debug/actix-hello 2>/dev/null | head -1 || true)
+            if [ -z "${BIN:-}" ]; then BIN=target/debug/actix-hello; fi
+            echo "BIN=$BIN"; ls -la "$BIN" || true
+            if [ ! -x "$BIN" ]; then echo "SERVER_STEP_FAILED: no executable"; exit 1; fi
+            PORT=18080 "$BIN" > /tmp/server.log 2>&1 &
+            SERVER_PID=$!
+            OK=0
+            for _ in $(seq 1 100); do
+              if curl -fsS http://127.0.0.1:18080/health > /tmp/health.json 2>/dev/null; then OK=1; break; fi
+              sleep 0.2
+            done
+            echo "--- server.log ---"; cat /tmp/server.log || true
+            if [ "$OK" != "1" ]; then echo "SERVER_STEP_FAILED: health check never succeeded"; exit 1; fi
+            cat /tmp/health.json
+            grep -q '"status":"ok"' /tmp/health.json
+            kill "$SERVER_PID" || true
+          } 2>&1 | tee /tmp/server-step.log
 
       - name: benchmark (warm scenarios; cold download is opt-in)
         working-directory: demo/actix-hello

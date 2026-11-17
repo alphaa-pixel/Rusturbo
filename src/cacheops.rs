@@ -201,6 +201,15 @@ pub fn publish(
         inputs: plan.key.inputs.clone(),
     };
 
+    // Populate the shared target directory when this build ran in the project's own
+    // target dir (the cold path). Marking the dir "ready" without the artifacts in it
+    // would make the next project with the same graph start from an empty target dir —
+    // and would make our own "cache hit" report a lie.
+    if cfg.cache.shared_targets && plan.shared_target_dir.is_none() {
+        let shared = cache.shared_target(&plan.key.short);
+        std::fs::create_dir_all(&shared)?;
+        crate::cache::copy_tree(source_dir, &shared)?;
+    }
     if cfg.cache.shared_targets {
         cache.mark_shared_ready(&plan.key.short, meta.clone())?;
     }
@@ -408,6 +417,70 @@ mod tests {
         let mut env = EnvPatch::new();
         apply_reuse(&mut env, &p2);
         assert!(env.set.contains_key("CARGO_TARGET_DIR"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Regression: a cold build must leave real artifacts in the shared target dir.
+    /// Previously only the readiness marker was written, so a follow-up project got an
+    /// empty target dir while `analyze` reported a hit.
+    #[test]
+    fn cold_publish_populates_the_shared_target_dir() {
+        let dir = std::env::temp_dir().join(format!("rts-publish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let project_target = dir.join("project-target");
+        let profile_dir = project_target.join("debug");
+        std::fs::create_dir_all(profile_dir.join("deps")).unwrap();
+        std::fs::write(profile_dir.join("libtokio-abc.rlib"), b"tokio").unwrap();
+        std::fs::write(profile_dir.join("deps/libserde-x.rlib"), b"serde").unwrap();
+
+        let cache = ArtifactCache::new(dir.join("cache"), 20, true);
+        cache.ensure().unwrap();
+        let cfg = Config::default();
+        let plan = plan(
+            &cache,
+            &cfg,
+            &toolchain(),
+            "x86_64-unknown-linux-gnu",
+            "dev",
+            &empty_graph(),
+            &[],
+            &project_target,
+        );
+        assert!(matches!(plan.reuse, Reuse::Cold { .. }), "first build is cold");
+
+        publish(
+            &cache,
+            &cfg,
+            &plan,
+            &profile_dir,
+            &toolchain(),
+            "x86_64-unknown-linux-gnu",
+            "dev",
+            &empty_graph(),
+        )
+        .unwrap();
+
+        let shared = cache.shared_target(&plan.key.short);
+        assert!(cache.shared_exists(&plan.key.short));
+        assert!(
+            shared.join("libtokio-abc.rlib").is_file(),
+            "shared dir must contain real artifacts, dir = {}",
+            shared.display()
+        );
+        assert!(shared.join("deps/libserde-x.rlib").is_file());
+
+        // A second project with the same graph now really reuses that directory.
+        let plan2 = plan(
+            &cache,
+            &cfg,
+            &toolchain(),
+            "x86_64-unknown-linux-gnu",
+            "dev",
+            &empty_graph(),
+            &[],
+            &project_target,
+        );
+        assert_eq!(plan2.reuse, Reuse::SharedTarget { dir: shared });
         let _ = std::fs::remove_dir_all(dir);
     }
 
