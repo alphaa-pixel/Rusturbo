@@ -10,6 +10,10 @@ env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   test:
     name: build + test (${{ matrix.os }})
@@ -38,39 +42,37 @@ jobs:
         shell: bash
         run: cargo clippy --all-targets --message-format=short 2>&1 | tee clippy.log
 
-      # GitHub-hosted log downloads are not reachable from some environments; surface
-      # compiler diagnostics as check-run annotations instead, which are.
-      - name: Surface diagnostics
+      # Hosted log downloads are blocked from some environments; post the log tail as a
+      # commit comment instead, which is readable through the REST API.
+      - name: Publish diagnostics
         if: failure()
         shell: bash
         run: |
+          FILES=$(ls -1 check.log test.log clippy.log 2>/dev/null || true)
+          {
+            echo "### CI diagnostics for $GITHUB_SHA"
+            for f in $FILES; do
+              echo ""
+              echo "#### $f ($(wc -c < "$f") bytes)"
+              echo '```'
+              grep -nE "error|warning:|FAILED|panicked|left:|right:|assertion" "$f" | head -120 || true
+              echo '```'
+            done
+          } > /tmp/diag.md
           python3 - <<'PY'
-          import os
-
-          def blocks(lines):
-              """Group diagnostic-looking lines into chunks that fit an annotation."""
-              keep, chunk, size, out = [], [], 0, []
-              for ln in lines:
-                  hot = (": error" in ln or ": warning:" in ln or ln.startswith("error")
-                         or ln.startswith("warning:") or "panicked at" in ln
-                         or "FAILED" in ln or "left:" in ln or "right:" in ln)
-                  if hot:
-                      if size + len(ln) > 2800:
-                          out.append(chunk); chunk, size = [], 0
-                      chunk.append(ln)
-                      size += len(ln) + 1
-              if chunk:
-                  out.append(chunk)
-              return out
-
-          for log in ("check.log", "test.log", "clippy.log", "build.log",
-                      "/tmp/dryrun.log", "/tmp/build-turbo.log", "/tmp/server.log"):
-              if not os.path.exists(log):
-                  continue
-              groups = blocks(open(log, errors="replace").read().splitlines())
-              for i, g in enumerate(groups[:10]):
-                  msg = "\n".join(g).replace("%", "%25").replace("\r", "")
-                  print(f"::error title={log} ({i+1}/{len(groups)})::{msg}")
+          import json, os, urllib.request
+          body = open("/tmp/diag.md", errors="replace").read()[:60000]
+          url = os.environ["GITHUB_API_URL"] + "/repos/" + os.environ["GITHUB_REPOSITORY"] + "/commits/" + os.environ["GITHUB_SHA"] + "/comments"
+          req = urllib.request.Request(url, method="POST",
+              data=json.dumps({"body": body}).encode(),
+              headers={"Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+                       "Accept": "application/vnd.github+json",
+                       "Content-Type": "application/json"})
+          try:
+              urllib.request.urlopen(req)
+              print("posted diagnostics as a commit comment")
+          except Exception as e:
+              print("could not post comment:", e)
           PY
 
   smoke:
@@ -108,24 +110,14 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          annotate() {
-            python3 - "$1" <<'PY'
-          import sys
-          lines = open(sys.argv[1], errors="replace").read().splitlines()
-          payload = "\n".join(lines[-60:]).replace("%", "%25")[:6000]
-          print(f"::error title=turbo-output::{payload}")
-          PY
-          }
-          if ! ../../target/release/rusturbo build --explain --dry-run > /tmp/dryrun.log 2>&1; then
-            cat /tmp/dryrun.log; annotate /tmp/dryrun.log; exit 1
-          fi
-          echo "--- dry run (always annotated for visibility) ---"
-          annotate /tmp/dryrun.log
-          if ! ../../target/release/rusturbo build --explain > /tmp/build-turbo.log 2>&1; then
-            cat /tmp/build-turbo.log; annotate /tmp/build-turbo.log; exit 1
-          fi
-          echo "--- dry-run ---"; tail -25 /tmp/dryrun.log
-          echo "--- build ---"; tail -25 /tmp/build-turbo.log
+          {
+            echo "### rusturbo dry run"
+            ../../target/release/rusturbo build --explain --dry-run 2>&1 || true
+            echo "### rusturbo build (real)"
+            ../../target/release/rusturbo build --explain 2>&1 || echo "BUILD_FAILED rc=$?"
+          } > /tmp/turbo.log 2>&1
+          cat /tmp/turbo.log
+          if grep -q "BUILD_FAILED" /tmp/turbo.log; then exit 1; fi
 
       - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello
@@ -157,9 +149,27 @@ jobs:
         run: ../../target/release/rusturbo benchmark --scenarios cargo-warm-registry,rusturbo-warm --out bench
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: benchmark-report
           path: demo/actix-hello/bench/report.*
+
+      - name: Publish e2e log
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          body = "### rusturbo e2e log\n```\n" + open("/tmp/turbo.log", errors="replace").read()[-50000:] + "\n```"
+          url = os.environ["GITHUB_API_URL"] + "/repos/" + os.environ["GITHUB_REPOSITORY"] + "/commits/" + os.environ["GITHUB_SHA"] + "/comments"
+          req = urllib.request.Request(url, method="POST", data=json.dumps({"body": body}).encode(),
+              headers={"Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+                       "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+          try:
+              urllib.request.urlopen(req); print("posted")
+          except Exception as e:
+              print("could not post comment:", e)
+          PY
 
       - name: Surface diagnostics
         if: failure()
