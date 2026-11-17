@@ -623,14 +623,37 @@ fn cmd_build(root: &Path, args: BuildArgs, quiet: bool, execute_program: bool) -
         }
     }
 
+    if !quiet {
+        eprintln!(
+            "{} {} {}",
+            util::dim("»"),
+            cacheops::cargo_bin(),
+            util::dim(&cargo_args.join(" "))
+        );
+    }
     let started = Instant::now();
-    let captured = cacheops::run_cargo(root, &cargo_args, &env.out, !quiet)?;
+    let captured = match cacheops::run_cargo(root, &cargo_args, &env.out, !quiet) {
+        Ok(c) => c,
+        Err(e) => {
+            anyhow::bail!(
+                "could not execute cargo: {e:#}\n  argv: {} {}\n  cwd: {}",
+                cacheops::cargo_bin(),
+                cargo_args.join(" "),
+                root.display()
+            );
+        }
+    };
     let elapsed = started.elapsed();
     if !captured.success() {
+        let tail = util::truncate_middle(captured.stderr.trim(), 4000);
         anyhow::bail!(
-            "cargo {} failed (exit {:?})",
+            "cargo {} failed (exit {:?})\n  argv: {} {}\n  cwd: {}\n{}",
             if execute_program { "run" } else { "build" },
-            captured.status.code()
+            captured.status.code(),
+            cacheops::cargo_bin(),
+            cargo_args.join(" "),
+            root.display(),
+            tail
         );
     }
 

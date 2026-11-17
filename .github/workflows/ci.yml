@@ -93,6 +93,16 @@ jobs:
         working-directory: demo/actix-hello
         run: ../../target/release/rusturbo analyze --output /tmp/analyze.json --json
 
+      - name: capture environment
+        working-directory: demo/actix-hello
+        shell: bash
+        run: |
+          echo "CARGO_HOME=${CARGO_HOME:-unset}"; echo "RUSTUP_HOME=${RUSTUP_HOME:-unset}"
+          ls -la; cat rusturbo.toml || true
+          which cargo rustc; cargo --version; rustc -vV | head -3
+          echo '--- raw cargo build (no rusturbo) ---'
+          cargo build --profile dev 2>&1 | tail -5 || echo "raw cargo build failed rc=$?"
+
       - name: build through rusturbo (cold turbo cache)
         working-directory: demo/actix-hello
         shell: bash
@@ -112,7 +122,8 @@ jobs:
           if ! ../../target/release/rusturbo build --explain > /tmp/build-turbo.log 2>&1; then
             cat /tmp/build-turbo.log; annotate /tmp/build-turbo.log; exit 1
           fi
-          tail -20 /tmp/build-turbo.log
+          echo "--- dry-run ---"; tail -25 /tmp/dryrun.log
+          echo "--- build ---"; tail -25 /tmp/build-turbo.log
 
       - name: analyze again (expects a cache hit)
         working-directory: demo/actix-hello
