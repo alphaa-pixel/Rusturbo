@@ -436,7 +436,7 @@ mod tests {
         let cache = ArtifactCache::new(dir.join("cache"), 20, true);
         cache.ensure().unwrap();
         let cfg = Config::default();
-        let plan = plan(
+        let cold = plan(
             &cache,
             &cfg,
             &toolchain(),
@@ -446,12 +446,12 @@ mod tests {
             &[],
             &project_target,
         );
-        assert!(matches!(plan.reuse, Reuse::Cold { .. }), "first build is cold");
+        assert!(matches!(cold.reuse, Reuse::Cold { .. }), "first build is cold");
 
         publish(
             &cache,
             &cfg,
-            &plan,
+            &cold,
             &profile_dir,
             &toolchain(),
             "x86_64-unknown-linux-gnu",
@@ -460,8 +460,8 @@ mod tests {
         )
         .unwrap();
 
-        let shared = cache.shared_target(&plan.key.short);
-        assert!(cache.shared_exists(&plan.key.short));
+        let shared = cache.shared_target(&cold.key.short);
+        assert!(cache.shared_exists(&cold.key.short));
         assert!(
             shared.join("libtokio-abc.rlib").is_file(),
             "shared dir must contain real artifacts, dir = {}",

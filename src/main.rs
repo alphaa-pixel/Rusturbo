@@ -239,7 +239,7 @@ fn cmd_init(root: &Path, args: InitArgs, quiet: bool) -> Result<()> {
         println!("{text}");
         return Ok(());
     }
-    std::fs::write(&path, &text).with_context(|| format!("writing {}", path.display()))?;
+    cfg.write(root)?;
     println!("{} wrote {}", util::green("✓"), path.display());
     println!(
         "  next: {} then {}",
